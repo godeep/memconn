@@ -8,8 +8,11 @@ import (
 // Conn is an in-memory implementation of Golang's "net.Conn" interface.
 type Conn struct {
 	net.Conn
+	rn         int64
+	wn         int64
 	localAddr  Addr
 	remoteAddr Addr
+	isRemote   bool
 }
 
 // LocalAddr implements the net.Conn LocalAddr method.
@@ -22,8 +25,13 @@ func (c Conn) RemoteAddr() net.Addr {
 	return c.remoteAddr
 }
 
+// Close implements the net.Conn Close method.
+func (c *Conn) Close() error {
+	return c.Conn.Close()
+}
+
 // Read implements the net.Conn Read method.
-func (c *Conn) Read(b []byte) (int, error) {
+func (c *Conn) Read(b []byte) (rn int, failed error) {
 	n, err := c.Conn.Read(b)
 	if err != nil {
 		if e, ok := err.(*net.OpError); ok {
@@ -31,13 +39,13 @@ func (c *Conn) Read(b []byte) (int, error) {
 			e.Source = c.localAddr
 			return n, e
 		}
-		return n, err
+		return n, &net.OpError{Op: "read", Net: "pipe", Err: err}
 	}
 	return n, nil
 }
 
 // Write implements the net.Conn Write method.
-func (c *Conn) Write(b []byte) (int, error) {
+func (c *Conn) Write(b []byte) (wn int, failed error) {
 	n, err := c.Conn.Write(b)
 	if err != nil {
 		if e, ok := err.(*net.OpError); ok {
@@ -45,7 +53,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 			e.Source = c.localAddr
 			return n, e
 		}
-		return n, err
+		return n, &net.OpError{Op: "write", Net: "pipe", Err: err}
 	}
 	return n, nil
 }

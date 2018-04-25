@@ -11,6 +11,7 @@ type listener struct {
 	addr Addr
 	rcvr chan net.Conn
 	done chan struct{}
+	rmvd chan struct{}
 }
 
 func (l listener) dial(
@@ -38,6 +39,7 @@ func (l listener) dial(
 		Conn:       remote,
 		localAddr:  raddr,
 		remoteAddr: laddr,
+		isRemote:   true,
 	}
 
 	// Start a goroutine that closes the remote side of the connection
@@ -46,6 +48,14 @@ func (l listener) dial(
 		<-l.done
 		remoteConn.Close()
 	}()
+
+	// If the provided context is nill then announce a new connection
+	// by placing the new remoteConn onto the rcvr channel. An Accept
+	// call from this listener will remove the remoteConn from the channel.
+	if ctx == nil {
+		l.rcvr <- remoteConn
+		return localConn, nil
+	}
 
 	// Announce a new connection by placing the new remoteConn
 	// onto the rcvr channel. An Accept call from this listener will
@@ -70,19 +80,23 @@ func (l listener) dial(
 
 // Accept implements the net.Listener Accept method.
 func (l listener) Accept() (net.Conn, error) {
-	// Loop until a new connection is received from the
-	// rcvr channel or until the listener is closed.
-	for {
-		select {
-		case remoteConn := <-l.rcvr:
+	select {
+	case remoteConn, ok := <-l.rcvr:
+		if ok {
 			return remoteConn, nil
-		case <-l.done:
-			return nil, &net.OpError{
-				Addr:   l.addr,
-				Source: l.addr,
-				Net:    l.addr.Network(),
-				Err:    errors.New("listener closed"),
-			}
+		}
+		return nil, &net.OpError{
+			Addr:   l.addr,
+			Source: l.addr,
+			Net:    l.addr.Network(),
+			Err:    errors.New("listener closed"),
+		}
+	case <-l.done:
+		return nil, &net.OpError{
+			Addr:   l.addr,
+			Source: l.addr,
+			Net:    l.addr.Network(),
+			Err:    errors.New("listener closed"),
 		}
 	}
 }
@@ -95,6 +109,9 @@ func (l listener) Close() error {
 	default:
 		// Still open, close it
 		close(l.done)
+
+		// Wait for the listener to be removed from the provider cache.
+		<-l.rmvd
 	}
 	return nil
 }

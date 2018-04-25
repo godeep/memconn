@@ -56,7 +56,7 @@ func (p *Provider) mapNetwork(network string) string {
 	return network
 }
 
-// Listen begins listening at addr for the specified network.
+// Listen begins listening at address for the specified network.
 //
 // Known networks are "memu" (memconn unbuffered).
 //
@@ -65,12 +65,12 @@ func (p *Provider) mapNetwork(network string) string {
 //
 // When the provided network is unknown the operation defers to
 // net.Dial.
-func (p *Provider) Listen(network, addr string) (net.Listener, error) {
+func (p *Provider) Listen(network, address string) (net.Listener, error) {
 	switch p.mapNetwork(network) {
 	case networkMemu:
-		return p.ListenMem(network, &Addr{Name: addr})
+		return p.ListenMem(network, &Addr{Name: address})
 	default:
-		return net.Listen(network, addr)
+		return net.Listen(network, address)
 	}
 }
 
@@ -83,7 +83,7 @@ func (p *Provider) Listen(network, addr string) (net.Listener, error) {
 func (p *Provider) ListenMem(
 	network string, laddr *Addr) (net.Listener, error) {
 
-	var listeners map[string]listener
+	var listeners *listenerCache
 
 	switch p.mapNetwork(network) {
 	case networkMemu:
@@ -104,14 +104,7 @@ func (p *Provider) ListenMem(
 			}
 		}
 
-		p.memu.Lock()
-		defer p.memu.Unlock()
-
-		if p.memu.cache == nil {
-			p.memu.cache = map[string]listener{}
-		}
-
-		listeners = p.memu.cache
+		listeners = &p.memu
 	default:
 		return nil, &net.OpError{
 			Addr:   laddr,
@@ -122,7 +115,14 @@ func (p *Provider) ListenMem(
 		}
 	}
 
-	if _, ok := listeners[laddr.Name]; ok {
+	listeners.Lock()
+	defer listeners.Unlock()
+
+	if listeners.cache == nil {
+		listeners.cache = map[string]listener{}
+	}
+
+	if _, ok := listeners.cache[laddr.Name]; ok {
 		return nil, &net.OpError{
 			Addr:   laddr,
 			Source: laddr,
@@ -135,6 +135,7 @@ func (p *Provider) ListenMem(
 	l := listener{
 		addr: *laddr,
 		done: make(chan struct{}),
+		rmvd: make(chan struct{}),
 		rcvr: make(chan net.Conn, 1),
 	}
 
@@ -142,12 +143,13 @@ func (p *Provider) ListenMem(
 	// the cache once the listener is closed.
 	go func() {
 		<-l.done
-		p.memu.Lock()
-		defer p.memu.Unlock()
-		delete(listeners, laddr.Name)
+		listeners.Lock()
+		defer listeners.Unlock()
+		delete(listeners.cache, laddr.Name)
+		close(l.rmvd)
 	}()
 
-	listeners[laddr.Name] = l
+	listeners.cache[laddr.Name] = l
 	return l, nil
 }
 
@@ -157,8 +159,8 @@ func (p *Provider) ListenMem(
 //
 // When the provided network is unknown the operation defers to
 // net.Dial.
-func (p *Provider) Dial(network, addr string) (net.Conn, error) {
-	return p.DialContext(defaultCtx, network, addr)
+func (p *Provider) Dial(network, address string) (net.Conn, error) {
+	return p.DialContext(nil, network, address)
 }
 
 // DialMem dials a named connection.
@@ -174,10 +176,8 @@ func (p *Provider) Dial(network, addr string) (net.Conn, error) {
 func (p *Provider) DialMem(
 	network string, laddr, raddr *Addr) (net.Conn, error) {
 
-	return p.DialMemContext(defaultCtx, network, laddr, raddr)
+	return p.DialMemContext(nil, network, laddr, raddr)
 }
-
-var defaultCtx = context.Background()
 
 // DialContext dials a named connection using a
 // Go context to provide timeout behavior.
@@ -185,16 +185,16 @@ var defaultCtx = context.Background()
 // Please see Dial for more information.
 func (p *Provider) DialContext(
 	ctx context.Context,
-	network, addr string) (net.Conn, error) {
+	network, address string) (net.Conn, error) {
 
 	switch p.mapNetwork(network) {
 	case networkMemu:
-		return p.DialMemContext(ctx, network, nil, &Addr{Name: addr})
+		return p.DialMemContext(ctx, network, nil, &Addr{Name: address})
 	default:
 		if ctx == nil {
-			return net.Dial(network, addr)
+			return net.Dial(network, address)
 		}
-		return (&net.Dialer{}).DialContext(ctx, network, addr)
+		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}
 }
 
@@ -207,7 +207,7 @@ func (p *Provider) DialMemContext(
 	network string,
 	laddr, raddr *Addr) (net.Conn, error) {
 
-	var listeners map[string]listener
+	var listeners *listenerCache
 
 	switch p.mapNetwork(network) {
 	case networkMemu:
@@ -242,9 +242,7 @@ func (p *Provider) DialMemContext(
 			}
 		}
 
-		p.memu.RLock()
-		defer p.memu.RUnlock()
-		listeners = p.memu.cache
+		listeners = &p.memu
 	default:
 		return nil, &net.OpError{
 			Addr:   raddr,
@@ -255,11 +253,10 @@ func (p *Provider) DialMemContext(
 		}
 	}
 
-	if ctx == nil {
-		ctx = defaultCtx
-	}
+	listeners.RLock()
+	defer listeners.RUnlock()
 
-	if l, ok := listeners[raddr.Name]; ok {
+	if l, ok := listeners.cache[raddr.Name]; ok {
 		return l.dial(ctx, network, *laddr, *raddr)
 	}
 

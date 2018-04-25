@@ -71,6 +71,6 @@ BenchmarkUNIXWithDeadline-8   	  100000	     24080 ns/op	    1425 B/op	      20 
 	memconn_test.go:239: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/465015895.sock
 ```
 
-MemConn is faster and allocates fewer objects than the TCP and UNIX domain
-sockets. While MemConn does allocate more memory, this is to be expected
+MemConn is more performant than TCP and UNIX domain sockets with respect
+to the CPU. While MemConn does allocate more memory, this is to be expected
 since MemConn is an in-memory implementation of the `net.Conn` interface.

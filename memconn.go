@@ -36,7 +36,7 @@ func MapNetwork(from, to string) {
 	provider.MapNetwork(from, to)
 }
 
-// Listen begins listening at addr for the specified network.
+// Listen begins listening at address for the specified network.
 //
 // Known networks are "memu" (memconn unbuffered).
 //
@@ -75,9 +75,9 @@ func Dial(network, address string) (net.Conn, error) {
 // Please see Dial for more information.
 func DialContext(
 	ctx context.Context,
-	network, addr string) (net.Conn, error) {
+	network, address string) (net.Conn, error) {
 
-	return provider.DialContext(ctx, network, addr)
+	return provider.DialContext(ctx, network, address)
 }
 
 // DialMem dials a named connection.
